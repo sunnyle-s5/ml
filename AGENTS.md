@@ -35,6 +35,8 @@ experiments/         one dated folder per idea: run.py + README.md (question · 
   2026-11-04-slot-split/   done: keep the 3/5 split (see its README)
 notes/               dated findings (what is true, with numbers and sources)
 drafts/              messages/specs waiting for the user to send (Slack, Notion, spec for FE/Product)
+issues/              local issue tracker: issues/<feature>/{spec.md, issues/NN-*.md} (see §7)
+docs/agents/         config for the mattpocock-skills engineering skills (tracker, labels, domain docs)
 pipeline/            git repo: a read-only COPY of pull/ ui/ sasrec/*.py + systemd units. Not deployed
 scratch/             throwaway, gitignored, safe to delete
 ```
@@ -97,3 +99,17 @@ Reference: `recs_mx96g1_2026-10-19.duckdb` gives default 88.7 % · als-continue 
 - Nothing is player-facing yet. The A/B test needs list identity on `evt:home_game_list_shown` / `act:game_open_triggered`
   (`drafts/spec-game-list-impression-and-ab.md`).
 - Open with others: PostHog S3 read key (Harvey, #devops), moving the code into git (Yann, `pipeline/`).
+
+## 7 · Agent skills
+
+### Issue tracker
+
+Local markdown under `issues/<feature>/` (committed; not the throwaway `scratch/`). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five roles (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`), recorded as a `Status:` line. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `GLOSSARY.md` + `docs/adr/` at the repo root, created lazily. See `docs/agents/domain.md`.
