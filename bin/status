@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Read-only morning check: time window, disk, timers and services, today's pipeline errors. Changes nothing.
+L=/home/ubuntu/ml/logs
+h=$(TZ=Asia/Bangkok date +%H); now=$(TZ=Asia/Bangkok date '+%a %d %b %H:%M +07')
+if [ "$h" -ge 2 ] && [ "$h" -lt 7 ]; then echo "⛔ $now: NIGHTLY WINDOW (02–07 +07). Don't run anything against data."; else echo "✅ $now: outside the nightly window"; fi
+df -h / | awk 'NR==2{print "disk: "$4" free of "$2" ("$5" used)"}'
+echo; echo "== timers"; systemctl list-timers --all --no-pager 2>/dev/null | grep -E 'ml-|recent-check' | awk '{print "  "$0}'
+echo; echo "== services (last result)"
+for u in ml-pull-nightly ml-recs-refresh ml-backtest-weekly ml-day-check ml-backfill-th ml-backfill-ph ml-backfill-bd ml-backfill-pk ml-backfill-br ml-backfill-pe ml-backfill-co ml-backfill-eg; do
+  printf "  %-20s %-9s exit=%s\n" "$u" "$(systemctl show -p ActiveState --value $u 2>/dev/null)" "$(systemctl show -p ExecMainStatus --value $u 2>/dev/null)"
+done
+echo; echo "== last day check"; tail -1 $L/day-check.out 2>/dev/null | cut -c1-160
+today=$(date -u +%Y-%m-%d)
+echo; echo "== errors in pull.jsonl today (UTC $today)"
+grep -F "\"ts\": \"$today" $L/pull.jsonl 2>/dev/null | grep -F '"error"' | /home/ubuntu/ml/.venv/bin/python -I -c '
+import sys, json, collections
+c = collections.Counter()
+for l in sys.stdin:
+    try: e = json.loads(l)
+    except Exception: continue
+    c[(e.get("step") or e.get("table") or "?", e.get("error", "").split("\n")[0][:90])] += 1
+for (s, err), n in c.most_common(8): print(f"  {n:4d}× {s}: {err}")
+if not c: print("  none")'
+echo; echo "== newest backtest snapshot on disk"; ls -t /home/ubuntu/ml/data/recs_mx96g1_2026-*.duckdb 2>/dev/null | head -1 | xargs -r basename

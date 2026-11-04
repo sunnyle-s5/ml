@@ -1,0 +1,16 @@
+# workspace repo: code, notes and drafts only
+# pipeline/ is its own git repo
+pipeline/
+scratch/
+**/out/
+*.duckdb
+*.duckdb.*
+*.wal
+*.parquet
+*.csv
+*.jsonl
+*.log
+__pycache__/
+*.env
+.env*
+CREDENTIALS*

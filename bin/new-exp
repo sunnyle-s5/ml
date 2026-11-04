@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Start an experiment from the template: bin/new-exp <short-name>  →  experiments/YYYY-MM-DD-<short-name>/
+set -euo pipefail
+[ $# -eq 1 ] || { echo "usage: bin/new-exp <short-name>"; exit 1; }
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+d="$(TZ=Asia/Bangkok date +%F)-$1"; dst="$here/experiments/$d"
+[ -e "$dst" ] && { echo "exists: $dst"; exit 1; }
+cp -r "$here/experiments/_template" "$dst"
+sed -i "s|__NAME__|$1|g; s|__DIR__|$d|g; s|__DATE__|$(TZ=Asia/Bangkok date +%F)|g" "$dst/run.py" "$dst/README.md"
+echo "created $dst"
+echo "next: edit build() in run.py, then  bin/py experiments/$d/run.py mx96g1 $(ls /home/ubuntu/ml/data/recs_mx96g1_2026-*.duckdb | sort | tail -1 | grep -o '20[0-9-]*')"

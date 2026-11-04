@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Refresh pipeline/ (git copy) from the live code. Reads /home/ubuntu/ml only, writes pipeline/ only, never commits.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; dst="$here/pipeline"
+X=(--exclude='.bak*' --exclude='*.bak-*' --exclude='__pycache__' --exclude='.tmp' --exclude='*.duckdb*' --exclude='*.wal'
+   --exclude='CREDENTIALS*' --exclude='*.env' --exclude='.env*' --exclude='*.out' --exclude='*.log' --exclude='*.done'
+   --exclude='*.nohup' --exclude='*.parquet' --exclude='*.csv' --exclude='*.jsonl')
+rsync -a "${X[@]}" /home/ubuntu/ml/pull /home/ubuntu/ml/ui "$dst/"
+rsync -a --prune-empty-dirs --exclude='.tmp' --include='*/' --include='*.py' --include='*.sh' --include='*.md' --exclude='*' /home/ubuntu/ml/sasrec "$dst/"
+cp /etc/systemd/system/ml-*.service /etc/systemd/system/ml-*.timer "$dst/systemd/" 2>/dev/null || true
+cd "$dst" && git status --short && echo "(review with: git -C $dst diff; commit yourself)"

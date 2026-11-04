@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Run Python from the shared venv with lib/ on the path, no __pycache__ writes, isolated from the current directory.
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$here/lib${PYTHONPATH:+:$PYTHONPATH}"
+exec nice -n 10 /home/ubuntu/ml/.venv/bin/python -P "$@"
