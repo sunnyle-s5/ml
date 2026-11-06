@@ -29,7 +29,9 @@ bin/py               run Python: shared venv + lib/ on the path, no __pycache__,
 bin/status           read-only check: nightly window, disk, timers, service exits, today's pipeline errors
 bin/new-exp <name>   new experiment from the template → experiments/YYYY-MM-DD-<name>/
 bin/sync-pipeline    refresh pipeline/ from the live code (read-only on source), show git status, no commit
-lib/mlkit.py         guard(), snap_path(), load(), score() (same SQL as recs_eval.py), save_csv(), CLUSTERS/MARKETS
+lib/mlkit.py         guard(), snap_path(), load(), score(lists=) (same SQL as recs_eval.py), save_csv(), CLUSTERS/MARKETS,
+                     attach_market()/plays_sql()/ep()/day_sql()/hour_sql() for the market caches (days, hours, older plays)
+GLOSSARY.md          canonical terms (brand, player, personal list, continue slots, cold player, …): use them
 experiments/         one dated folder per idea: run.py + README.md (question · setup · result · decision) + out/
   _template/         copied by bin/new-exp
   2026-11-04-slot-split/   done: keep the 3/5 split (see its README)
@@ -86,7 +88,8 @@ Reference: `recs_mx96g1_2026-10-19.duckdb` gives default 88.7 % · als-continue 
 - Run Python with `bin/py` (`-P`: no script-dir imports) so a stray `json.py` in a data folder can't be imported.
 - **Memory:** the VM has 30 GB shared with the nightly jobs. Loading a big cluster whole into pandas took 17 GB (bdk1).
   `mlkit.load()` keeps only scored players and the ranker list (bdk1: about 4 GB, 30 s). Run clusters one after another, not in parallel,
-  and prefer DuckDB SQL for anything heavier (see `experiments/2026-11-04-slot-split/`).
+  and prefer DuckDB SQL for anything heavier (see `experiments/2026-11-04-slot-split/`). Building 3 list variants in pandas on top of
+  `load()` peaked at 14 GB RSS on bdk1 (`experiments/2026-11-05-headroom/`): keep to ≤ 3 variants per run, or do it in SQL.
 - `ml-pull-nightly` exits 0 even when the dims step fails on every cluster. Check `bin/status` ("errors in pull.jsonl today"), not just exit codes.
 
 ## 6 · State as of 4 Nov 2026 (check before relying on it)
@@ -96,8 +99,19 @@ Reference: `recs_mx96g1_2026-10-19.duckdb` gives default 88.7 % · als-continue 
 - Live Popular list: share-of-total 30/70 since 22–23 Oct on every market (raw formula before). Sunday bug still in the inputs.
 - **Broken since 4 Nov 00:00 +07:** `pull_dims.py` on all 21 clusters (`game."freeSpinEnabled"` dropped upstream), so no catalogue or
   live-ranking updates. Reported via `drafts/slack-ux-pipeline-2026-11-04.md` (check whether it's been sent and fixed).
-- Nothing is player-facing yet. The A/B test needs list identity on `evt:home_game_list_shown` / `act:game_open_triggered`
-  (`drafts/spec-game-list-impression-and-ab.md`).
+- **Step 16 (EASE inside the ranker) is on by default since 4 Nov ~23:40** (`build_recs.py --ease-cands 30`; same model name, see
+  `meta` key `ranker_ease_cands`). Measured on 5 clusters × 1 week only: +0.0–0.1 pt HR@10. Headroom check
+  (`experiments/2026-11-05-headroom/`): a perfect new-slot model adds at most 6–7 pt HR@10, a perfect continue rule ~2 pt.
+- Nothing is player-facing yet. POC ticket (draft, not sent): `drafts/spec-game-list-impression-and-ab.md`, a 14-day A/B on
+  ADDA7 (bdk1) via a daily per-player S3 file. After-POC plan: `drafts/plan-after-poc.md`.
+- v2 spec review (`notes/2026-11-05-v2-spec-review.md`), 20 clusters × 2 weeks:
+  - Pinning own games carries 88–98 % of the offline HR@10 gain (ADDA7: 92–94 %).
+  - Only ~19 % of new-game hits are adopted (played on ≥ 2 days).
+  - 24–29 % of test-week players are cold (no list).
+  - Proposed POC changes R1–R6 are not applied yet.
+- v3 review (`notes/2026-11-05-v3-arch-review.md`): a learned own + new ranker (`experiments/2026-11-05-v3-unified/`):
+  - +1.13 pt HR@10 vs the default on 20/20 clusters, in one forward week (provisional). Re-run `run.py all` after Wed 11 Nov.
+  - LLM content enrichment is bounded at 0.20 pt of HR@10 (share of scored players), so it is not worth doing.
 - Open with others: PostHog S3 read key (Harvey, #devops), moving the code into git (Yann, `pipeline/`).
 
 ## 7 · Agent skills

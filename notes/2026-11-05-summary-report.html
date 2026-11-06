@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Game recommendation: v1 → v3 summary and live-POC proposal (5 Nov 2026)</title>
+<style>
+  :root { --fg:#1d2430; --muted:#5b6575; --border:#d9dee6; --accent:#2457c5; --good:#1e7a3c; --bad:#b3261e; --warn:#9a6700; --bg2:#f5f7fa; }
+  body { font: 15px/1.55 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: var(--fg); max-width: 1080px; margin: 32px auto; padding: 0 24px; }
+  h1 { font-size: 26px; margin-bottom: 4px; }
+  h2 { font-size: 20px; margin-top: 40px; border-bottom: 2px solid var(--border); padding-bottom: 4px; }
+  h3 { font-size: 16px; margin-top: 24px; }
+  .sub { color: var(--muted); margin-top: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0 8px; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: var(--bg2); font-weight: 600; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .good { color: var(--good); font-weight: 600; }
+  .bad { color: var(--bad); font-weight: 600; }
+  .warn { color: var(--warn); font-weight: 600; }
+  .box { background: var(--bg2); border-left: 4px solid var(--accent); padding: 12px 16px; margin: 16px 0; }
+  .box.final { border-left-color: var(--good); }
+  .box.risk { border-left-color: var(--warn); }
+  .src { color: var(--muted); font-size: 12.5px; }
+  code { font-size: 13px; background: var(--bg2); padding: 1px 4px; border-radius: 3px; }
+  ul { margin: 6px 0; } li { margin: 3px 0; }
+  svg { width: 100%; height: auto; margin: 8px 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  @media print { body { margin: 0; } h2 { page-break-after: avoid; } table, svg, .box { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+
+<h1>Game recommendation: v1 → v3 summary and live-POC proposal</h1>
+<p class="sub">sunny · ML VM (S5VM-24) · 5 Nov 2026 · all numbers offline, from frozen weekly backtests (20 scored clusters, 8 markets), read-only. Nothing has been sent or deployed.</p>
+
+<div class="box final">
+  <b>In one paragraph.</b> Our current list (v1) already beats the site's Popular list by 15–41 pt HR@10 offline. Most of that comes from showing players their own recent games, not from the model. The ideas worth taking from the v2 and v3 reference designs are:
+  <ul>
+    <li>learn <i>which</i> own games to show, together with new games, in one ranker: +1.13 pt HR@10 on 20/20 clusters (v3);</li>
+    <li>give returning players without a list their own older games: +12.7 to +17.8 pt on their first day back (v3).</li>
+  </ul>
+  The LLM parts of v3 and most of v2 do not help HR@10 with our data. <b>Proposed for the live POC:</b> the v3 "unified" personal list on ADDA7 with the cold-player fallback, against the live Popular list and a no-ML "own games + Popular" arm. Release gate: the 11 Nov re-test and the dims-pull fix.
+</div>
+
+<p class="toc">Contents: <a href="#v1">1 · v1, the current system</a> · <a href="#v2">2 · v2: what works / won't</a> · <a href="#v3">3 · v3: what works / won't</a> · <a href="#final">4 · Proposed live-POC release</a> · <a href="#next">5 · Blockers and next steps</a></p>
+
+<p class="src"><b>Metric.</b> HR@10 = the share of scored players (they had a personal list and played in the following week) who played at least one of the list's first 10 games that week. New-game HR = the same, counting only games the player hadn't played in the 60 days before. Reference week: 27 Oct–2 Nov 2026 (as of 26 Oct), 1,383,665 scored players.</p>
+
+<!-- ============================================================ -->
+<h2 id="v1">1 · v1: the current system (best models + architecture)</h2>
+
+<h3>Architecture (runs today on the ML VM; not player-facing)</h3>
+<svg viewBox="0 0 1000 330" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, Arial, sans-serif" font-size="13">
+  <defs><marker id="a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#5b6575"/></marker></defs>
+  <g fill="#f5f7fa" stroke="#5b6575">
+    <rect x="10" y="30" width="150" height="62" rx="6"/>
+    <rect x="200" y="30" width="170" height="62" rx="6"/>
+    <rect x="410" y="30" width="170" height="62" rx="6"/>
+    <rect x="620" y="10" width="360" height="132" rx="6"/>
+    <rect x="620" y="190" width="170" height="62" rx="6"/>
+    <rect x="810" y="190" width="170" height="62" rx="6"/>
+    <rect x="410" y="190" width="170" height="62" rx="6"/>
+    <rect x="200" y="190" width="170" height="62" rx="6"/>
+  </g>
+  <g fill="#1d2430" font-size="12">
+    <text x="22" y="55" font-weight="600">Site replicas</text><text x="22" y="74">21 clusters</text><text x="22" y="88">read-only</text>
+    <text x="212" y="55" font-weight="600">pull_* / backfill</text><text x="212" y="74">rounds, catalogue,</text><text x="212" y="88">live ranking → S3</text>
+    <text x="422" y="55" font-weight="600">load_archive</text><text x="422" y="74">S3 → DuckDB caches</text><text x="422" y="88">(120 days of plays)</text>
+    <text x="632" y="32" font-weight="600">build_recs.py · daily per cluster</text>
+    <text x="632" y="54">• continue: player's 3/5 most recent games</text>
+    <text x="632" y="73">• new slots: LightGBM LambdaRank, 32 features</text>
+    <text x="632" y="92">   pool: popular 100 + ALS 30 + EASE 30</text>
+    <text x="632" y="111">• also ALS, popular, category-rule lists</text>
+    <text x="632" y="130">→ recs_&lt;cluster&gt;.duckdb (8 models × 10)</text>
+    <text x="632" y="215" font-weight="600">Weekly backtest (Wed)</text><text x="632" y="234">frozen snapshot + truth</text>
+    <text x="822" y="215" font-weight="600">Read-outs</text><text x="822" y="234">Notion row · rank UI</text>
+    <text x="422" y="215" font-weight="600">export_lists → S3</text><text x="422" y="234">brand lists (PostHog)</text>
+    <text x="212" y="215" font-weight="600" fill="#b3261e">Missing for the POC</text><text x="212" y="234" fill="#b3261e">per-player file → API</text>
+  </g>
+  <g stroke="#5b6575" stroke-width="1.5" fill="none" marker-end="url(#a)">
+    <path d="M160,61 H198"/><path d="M370,61 H408"/><path d="M580,61 H618"/>
+    <path d="M705,142 V188"/><path d="M790,221 H808"/><path d="M640,142 L500,188"/><path d="M410,221 H372"/>
+  </g>
+</svg>
+<p class="src">Code: <code>/home/ubuntu/ml/pull/build_recs.py</code>, <code>step14_ltr.py</code>, <code>export_lists.py</code>; timers: ml-pull-nightly 02:00, ml-recs-refresh 04:30, ml-backtest-weekly Wed 06:00 (+07). Today's bdk1 build (5 Nov 05:26 +07) ran with EASE on (<code>ranker_ease_cands = 30</code>) for 834,162 players.</p>
+
+<h3>Models tried in v1, and the one we kept</h3>
+<table>
+<tr><th>Model / list</th><th>Result (offline)</th><th>Status</th></tr>
+<tr><td><b>hybrid (recent continue + ranker new)</b>: 3/5 own recent games + LightGBM new slots</td><td>+2.3 to +8.5 pt HR@10 over the ALS hybrid on 20/20 clusters (27 Oct–2 Nov)</td><td class="good">Default since 3 Nov</td></tr>
+<tr><td>hybrid (ALS continue + ranker new)</td><td>~65 % of the ALS continue picks were games the player had never played; those hit 7–8 % of the time</td><td>Replaced</td></tr>
+<tr><td>EASE as extra candidates + features in the ranker (step 16)</td><td>+0.0 to +0.1 pt HR@10, +0.0 to +0.6 pt new-game HR (5 clusters × 1 week)</td><td class="warn">On since 4 Nov; gain not yet proven</td></tr>
+<tr><td>EASE standalone in the new slots</td><td>The default with EASE new slots loses 0.3–1.2 pt on all 10 clusters with an eval</td><td class="bad">Dropped</td></tr>
+<tr><td>SASRec (sequence transformer)</td><td>Ties or loses to the recency default (mx96g1, mxk1 × 2 weeks)</td><td class="bad">Dropped</td></tr>
+<tr><td>Continue-slot split 3/5 (vs 2…8)</td><td>More own slots: +0.4 to +0.7 pt HR, −0.9 to −3.1 pt new-game HR</td><td>3/5 kept (Product trade-off)</td></tr>
+</table>
+
+<h3>Where v1 stands: default vs the site's live Popular list (27 Oct–2 Nov)</h3>
+<table>
+<tr><th>Market</th><th class="n">Scored players</th><th class="n">Live Popular HR@10</th><th class="n">v1 default HR@10</th><th class="n">Gap</th></tr>
+<tr><td>MX</td><td class="n">95,779</td><td class="n">61.7 %</td><td class="n">86.2 %</td><td class="n">+24.5</td></tr>
+<tr><td>TH</td><td class="n">617,760</td><td class="n">60.4 %</td><td class="n">91.9 %</td><td class="n">+31.5</td></tr>
+<tr><td>PH</td><td class="n">305,408</td><td class="n">77.8 %</td><td class="n">93.0 %</td><td class="n">+15.2</td></tr>
+<tr><td>BD</td><td class="n">321,266</td><td class="n">77.9 %</td><td class="n">93.4 %</td><td class="n">+15.5</td></tr>
+<tr><td>PK</td><td class="n">20,741</td><td class="n">58.3 %</td><td class="n">90.5 %</td><td class="n">+32.2</td></tr>
+<tr><td>BR</td><td class="n">8,967</td><td class="n">61.5 %</td><td class="n">88.8 %</td><td class="n">+27.3</td></tr>
+<tr><td>PE</td><td class="n">8,548</td><td class="n">50.5 %</td><td class="n">91.4 %</td><td class="n">+40.9</td></tr>
+<tr><td>CO</td><td class="n">5,196</td><td class="n">70.6 %</td><td class="n">91.6 %</td><td class="n">+21.0</td></tr>
+<tr><th>All 20 clusters</th><th class="n">1,383,665</th><th class="n">—</th><th class="n">92.1 %</th><th></th></tr>
+</table>
+<p><b>Headroom:</b> even a perfect new-game model would add at most +6.6 pt HR@10, and a perfect choice of continue games +2.1 pt. Offline credit also includes games players would have found anyway, so only a live A/B shows the real lift.</p>
+<p class="src">Sources: <code>logs/backtest-2026-10-26-summary.out</code>, <code>logs/recent-check-2026-10-26.out</code>, <code>sasrec/s14ease_*_2026-10-26.eval.out</code>, <code>experiments/2026-11-04-slot-split/</code>, <code>experiments/2026-11-05-headroom/</code>, <code>notes/2026-11-05-model-options.md</code>.</p>
+
+<!-- ============================================================ -->
+<h2 id="v2">2 · v2 ("Personalized Category &amp; Provider Grids"): what works / won't</h2>
+<p>The v2 spec was written for another stack (BigQuery, wallet CDC, Redis). It was read as a source of ideas, and where it conflicts with our data, our data wins. Five experiments were run on 20 clusters × 2 weeks, plus the POC brand ADDA7.</p>
+
+<table>
+<tr><th style="width:30%">Idea</th><th style="width:14%">Verdict</th><th>Evidence</th></tr>
+<tr><td>Pin the player's own games first</td><td class="good">Works: it is where the gain is</td><td>"Own games + live Popular fill" with no ML reaches 88–98 % of the default's gain over live in every market (ADDA7: 92 % / 94 %). The ML adds ~1 pt HR@10 and ~3 pt new-game HR on top.</td></tr>
+<tr><td>3 arms incl. a no-ML heuristic arm</td><td class="good">Adopt</td><td>It shows online whether the ML adds anything beyond pinning. The site could even build this arm without our file.</td></tr>
+<tr><td>A/A check in parallel, CUPED</td><td class="good">Adopt</td><td>A 17/17/33/33 split costs no calendar time. CUPED roughly halves the variance of activity and bet on ADDA7 (factor 0.51–0.58).</td></tr>
+<tr><td>Adoption metric (NGA-7) as a secondary</td><td class="good">Adopt</td><td>Only ~19 % of new-game hits are played again on a second day. Offline new-game HR overstates discovery about five-fold.</td></tr>
+<tr><td>Returning cold players: own older games</td><td class="good">Works</td><td>+9.2 / +11.5 pt HR@10 (rest of week) vs the brand list.</td></tr>
+<tr><td>One-game cold start for newcomers</td><td class="bad">Won't</td><td>+1.6 / −0.1 pt vs the brand list (coverage 84–98 %, so a real result).</td></tr>
+<tr><td>"Control = 0.3 own play + 0.7 bets"</td><td class="bad">Contradicted</td><td>The live list is brand-wide: 70 % player count + 30 % bet, 7-day window, with manual pins and exclusions.</td></tr>
+<tr><td>Engaged real-money popularity, real-money-only training</td><td class="bad">Won't (no data)</td><td>Rounds have no real/bonus flag, and the list is already player-led.</td></tr>
+<tr><td>Theoretical-GGR guardrail</td><td class="bad">Won't (no RTP)</td><td>Bet per player is used as a proxy; on one brand it can be monitored, not gated.</td></tr>
+<tr><td>Item-kNN personalised block</td><td class="bad">Won't</td><td>The ranker already has item-item and EASE features, and standalone EASE lost on 9/10 clusters.</td></tr>
+<tr><td>Grid per lobby tab / provider pages</td><td class="warn">Open</td><td>The SLOT-tab view gives the same picture (94 % share of gain). Whether <code>main_list</code> is one list or a per-tab grid is the first open question in the POC ticket.</td></tr>
+<tr><td>RG-lite / safer mode</td><td class="warn">Parked</td><td>Two of six markers can be computed (3.5 % of ADDA7's active players flagged). Handled in a separate RG session.</td></tr>
+</table>
+<p class="src">Sources: <code>notes/2026-11-05-v2-spec-review.md</code>; <code>experiments/2026-11-05-v2-{arms,adoption,coldstart,poc-brand}/</code>.</p>
+
+<!-- ============================================================ -->
+<h2 id="v3">3 · v3 ("LLM-based casino recommender"): what works / won't</h2>
+<p>Judged on HR@10 only; the RG material was left for another session. Three experiments, no LLM calls, nothing sent outward.</p>
+
+<h3>Where the misses are (what any v3 idea could still recover)</h3>
+<table>
+<tr><th>Lever (27 Oct–2 Nov, pt of scored players)</th><th class="n">Recoverable HR@10</th></tr>
+<tr><td>All misses (no top-10 hit on the default)</td><td class="n">7.9</td></tr>
+<tr><td>Player replayed an own game that wasn't on the list (… ranked 6–10 by recency)</td><td class="n">2.11 (1.44)</td></tr>
+<tr><td>Ranker pick ranked 1–10 but not shown</td><td class="n">1.00</td></tr>
+<tr><td>Lapsed game (played earlier than the 60-day window)</td><td class="n">0.50</td></tr>
+<tr><td><b>Sequel / edition of an own game</b> (stand-in for LLM content enrichment)</td><td class="n"><b>0.20</b></td></tr>
+<tr><td>Game in the live Popular top 50</td><td class="n">3.43</td></tr>
+</table>
+
+<table>
+<tr><th style="width:30%">v3 idea</th><th style="width:14%">Verdict</th><th>Evidence</th></tr>
+<tr><td>Retrieve → rank, extended to the player's own games ("unified ranker")</td><td class="good">Works</td><td>One LightGBM scores own and new candidates together. Trained on 20–26 Oct, tested on 27 Oct–2 Nov: <b>+1.13 pt HR@10, above the default on 20/20 clusters</b> (min +0.39). +0.40 pt over simply giving own games 8 slots.</td></tr>
+<tr><td>… "learned continue": same 3/5 slots, model picks the own games</td><td class="good">Works</td><td>+0.77 pt HR@10 with <b>no loss of new-game HR</b> (19.4 % → 19.4 %).</td></tr>
+<tr><td>Cold-start routing: returning cold players see their own older games</td><td class="good">Works</td><td>Day-one HR@10 58.4 → 76.2 % and 61.7 → 74.4 % (+17.8 / +12.7 pt); bdk1 +12.7 / +9.8.</td></tr>
+<tr><td>Segment / newcomer popularity list</td><td class="bad">Won't (fails bar)</td><td>+3.1 / +2.1 pt pooled, but only +1.4 pt on bdk1 in the 27 Oct–2 Nov week; the bar was 2.0 pt.</td></tr>
+<tr><td>LLM-enriched game metadata / embeddings</td><td class="bad">Won't</td><td>The catalogue has names, provider and category only. The content signal is bounded at 0.20 pt of HR@10.</td></tr>
+<tr><td>LLM persona summaries, LLM reranker → distilled ranker</td><td class="bad">Won't</td><td>No signal beyond the play data we already use; would need player data to leave the VM.</td></tr>
+<tr><td>Semantic IDs, generative retrieval, HSTU / OneRec</td><td class="bad">Won't</td><td>Built for billions of interactions and millions of items. Our catalogue is a few thousand games, and SASRec already lost.</td></tr>
+<tr><td>Exploration / diversity re-ranking</td><td class="bad">Won't (for HR@10)</td><td>Trades hits for discovery by design.</td></tr>
+<tr><td>Real-time / in-session features, chat</td><td class="warn">Not tested</td><td>The daily build already exists; intra-day own games repeat the site's last-played row; chat is another surface.</td></tr>
+</table>
+<p class="src">Sources: <code>notes/2026-11-05-v3-arch-review.md</code>; <code>experiments/2026-11-05-v3-{misses,unified,cold-day1}/</code>.</p>
+
+<h3>Unified ranker by market (27 Oct–2 Nov, HR@10)</h3>
+<table>
+<tr><th>Market</th><th class="n">v1 default</th><th class="n">Rule: 8 own slots</th><th class="n">v3 learned continue</th><th class="n">v3 unified top 10</th><th class="n">Δ top 10</th></tr>
+<tr><td>MX</td><td class="n">86.23 %</td><td class="n">87.22 %</td><td class="n">87.34 %</td><td class="n">87.93 %</td><td class="n">+1.70</td></tr>
+<tr><td>BD</td><td class="n">93.39 %</td><td class="n">93.74 %</td><td class="n">93.90 %</td><td class="n">94.04 %</td><td class="n">+0.65</td></tr>
+<tr><td>PH</td><td class="n">92.96 %</td><td class="n">93.79 %</td><td class="n">94.02 %</td><td class="n">94.48 %</td><td class="n">+1.52</td></tr>
+<tr><td>TH</td><td class="n">91.93 %</td><td class="n">92.78 %</td><td class="n">92.64 %</td><td class="n">93.03 %</td><td class="n">+1.10</td></tr>
+<tr><td>PK</td><td class="n">90.48 %</td><td class="n">91.00 %</td><td class="n">91.43 %</td><td class="n">91.76 %</td><td class="n">+1.27</td></tr>
+<tr><td>BR</td><td class="n">88.79 %</td><td class="n">89.39 %</td><td class="n">89.76 %</td><td class="n">90.35 %</td><td class="n">+1.56</td></tr>
+<tr><td>PE</td><td class="n">91.37 %</td><td class="n">91.53 %</td><td class="n">92.00 %</td><td class="n">91.96 %</td><td class="n">+0.60</td></tr>
+<tr><td>CO</td><td class="n">91.63 %</td><td class="n">91.97 %</td><td class="n">92.21 %</td><td class="n">92.01 %</td><td class="n">+0.38</td></tr>
+<tr><th>All (1,383,665)</th><th class="n">92.05 %</th><th class="n">92.78 %</th><th class="n">92.83 %</th><th class="n">93.18 %</th><th class="n">+1.13</th></tr>
+<tr><td>New-game HR (all)</td><td class="n">19.4 %</td><td class="n">16.1 %</td><td class="n">19.4 %</td><td class="n">14.0 %</td><td></td></tr>
+<tr><td>ADDA7 (POC brand)</td><td class="n">93.77 %</td><td class="n">94.18 %</td><td class="n">94.30 %</td><td class="n">94.46 %</td><td class="n">+0.69</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="final">4 · Proposed final model for the live POC</h2>
+
+<div class="box final">
+  <b>Release candidate: "personal list v3"</b>
+  <ul>
+    <li><b>Players with a personal list:</b> the <b>v3 unified ranker, top 10</b>. A LightGBM model scores the player's 20 most recent own games together with new-game candidates (ranker new 10, popular 10, live top 20), trained daily on the previous week.
+      <ul><li>Discovery-preserving alternative if Product prefers: <b>learned continue (3/5)</b>, at +0.77 pt with unchanged new-game HR.</li></ul></li>
+    <li><b>Returning players without a list</b> (no play in 30 days, but earlier play): their 5 most recent earlier games, then the live Popular list.</li>
+    <li><b>Newcomers:</b> the live Popular list (unchanged).</li>
+    <li><b>Fallback</b> (no file row, stale file, error): the live Popular list, with <code>fallbackReason</code> logged.</li>
+  </ul>
+</div>
+
+<h3>POC design</h3>
+<table>
+<tr><th>Item</th><th>Proposal</th></tr>
+<tr><td>Brand / surface</td><td>ADDA7 (bdk1, Bangladesh): 64,040 scored players a week. Detectable difference (α 0.05, 80 % power): 1.1 pt at 50/50, ≈ 1.35 pt per pair with the four arms below. Surface: home <code>main_list</code>.</td></tr>
+<tr><td>Arms (person-level, sticky)</td><td>17 % control A1 (live Popular) · 17 % control A2 (live Popular; the A/A check) · 33 % <b>H</b> = own games + live Popular, no ML · 33 % <b>B</b> = personal list v3</td></tr>
+<tr><td>Expected offline on ADDA7</td><td>Live 78.9 % · H 92.9 % · v1 default 93.8 % · <b>v3 unified 94.5 %</b> (27 Oct–2 Nov)</td></tr>
+<tr><td>Primary metric</td><td>Share of exposed players who open ≥ 1 game from <code>main_list</code> positions 1–10 within 7 days (the online twin of HR@10)</td></tr>
+<tr><td>Secondary</td><td>Game opens per player across all surfaces (incrementality vs <code>last_played</code>); new-game opens; adoption (a new game played on ≥ 2 days); stratum "had a personal list at exposure"</td></tr>
+<tr><td>Duration / decision</td><td>14 days. <b>B vs A1+A2</b> is the main test, and <b>B vs H</b> shows whether the ML adds anything over pinning. Ship if B wins with PostHog chance-to-win ≥ 95 % and no guardrail breaks.</td></tr>
+<tr><td>Delivery</td><td>Daily per-player S3 file (<code>recs/&lt;list_date&gt;_&lt;cluster&gt;.parquet</code>: account_id, member, rk, game_id, slot, list_id) read by the BE. Two FE event changes, one PostHog flag. Spec: <code>drafts/spec-game-list-impression-and-ab.md</code>.</td></tr>
+</table>
+
+<h3>Why this one</h3>
+<ul>
+  <li>It is the best list measured on our data: +1.13 pt over v1 on every cluster, built only from features the pipeline already has, with no new data sources and no LLM.</li>
+  <li>Running cost is small: one extra LightGBM per cluster per day. The full 20-cluster run took 9 minutes on the VM (peak 9.3 GB), similar in size to the existing step-14 ranker.</li>
+  <li>Arm H protects the decision. Offline, pinning own games carries ~90 % of the gain, so if H ≈ B online, the cheapest product is a site-side change and the model is not needed.</li>
+</ul>
+
+<div class="box risk">
+  <b>Conditions before release</b>
+  <ol>
+    <li><b>Second forward week (Wed 11 Nov):</b> re-run <code>experiments/2026-11-05-v3-unified/run.py all</code>.
+      <ul>
+        <li>The unified list must again beat the default by ≥ 0.5 pt pooled on ≥ 15/20 clusters.</li>
+        <li>If it fails, release <b>v1 default</b> (hybrid recent continue + ranker new) as arm B instead; everything else stays the same.</li>
+        <li>That week is the first built with EASE on, so check <code>meta.ranker_ease_cands</code> when reading it.</li>
+      </ul></li>
+    <li><b>Dims pull fixed:</b> <code>pull_dims.py</code> still selects the dropped column <code>freeSpinEnabled</code> (179 errors today). Until it's fixed, no new games enter any list.</li>
+    <li><b>Productionise in the pipeline:</b> a patch to <code>build_recs.py</code> (unified ranker + returning-cold list) and a new <code>export_recs.py</code>, applied by Yann. The live pipeline cannot be changed from this account.</li>
+    <li><b>Tech-team work:</b> BE serving, FE list identity in events, the PostHog flag, and S3 read access (Harvey). The RG review is in a separate session.</li>
+  </ol>
+</div>
+
+<h3>Trade-off to note</h3>
+<p>The extra HR@10 is mostly replays of the player's own games: new-game HR falls from 19.4 % to 14.0 %, and the site's last-played row already shows some of those games. If discovery matters to Product, use the learned-continue variant (+0.77 pt, new-game HR unchanged). The live A/B's "opens per player across all surfaces" metric shows whether the list adds play or only moves clicks.</p>
+
+<!-- ============================================================ -->
+<h2 id="next">5 · Blockers and next steps</h2>
+<table>
+<tr><th>When</th><th>What</th><th>Owner</th></tr>
+<tr><td>Now</td><td>Fix the dims pull (drop <code>freeSpinEnabled</code> from GAME_SQL)</td><td>Yann</td></tr>
+<tr><td>Now</td><td>Send the POC ticket to BE / FE / DevOps / Product. Open questions: is <code>main_list</code> one list or a per-tab grid, and is member id = BE id = PostHog id?</td><td>sunny → Yann</td></tr>
+<tr><td>Wed 11 Nov after 07:00</td><td>Re-test the unified ranker on the second forward week; update this report</td><td>sunny</td></tr>
+<tr><td>After re-test</td><td>Write the <code>build_recs.py</code> / <code>export_recs.py</code> patch for the chosen arm B</td><td>sunny → Yann</td></tr>
+<tr><td>Separate session</td><td>Responsible-gambling design (safer mode, guardrails)</td><td>sunny + Compliance</td></tr>
+<tr><td>After the POC</td><td>Retrain on logged impressions and clicks; test learned continue vs top 10 online; widen to one brand per market</td><td>ML</td></tr>
+</table>
+
+<p class="src">All experiment folders hold a README (question · setup · result · decision) and their per-cluster CSVs. Every harness checks that its rebuilt default equals the stored default before any number is reported. Generated 5 Nov 2026 from <code>/home/sunny/ml</code>.</p>
+</body>
+</html>

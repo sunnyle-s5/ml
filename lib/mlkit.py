@@ -5,8 +5,11 @@
 - guard()            refuse to run during the nightly window (02:00–07:00 +07) or when disk is low
 - snap_path(c, asof) absolute path of a shared backtest snapshot (recs_<c>_<asof>.duckdb)
 - load(c, asof)      hist / truth / stored recs of one snapshot as pandas DataFrames (opened READ-ONLY)
-- score(c, asof, mine, stored=[...])  HR@10 · new · both, the same SQL as pull/recs_eval.py and the rank UI Overview
+- score(c, asof, mine, stored=[...], lists=[...])  HR@10 · new · both, the same SQL as pull/recs_eval.py and the rank UI
+                     Overview; `lists` adds brand lists from snap.lists (e.g. "live (as stored)")
 - save_csv(rows, path) write result rows under your experiment's out/ folder
+- attach_market(con, c) + plays_sql(con, c)  the market cache's plays (archive + live, READ-ONLY), for anything the
+                     snapshot lacks (days, hours, earlier history); ep(day, c), day_sql(), hour_sql() use the market's day
 
 All paths are absolute on purpose: the shared scripts use "~/ml/...", which from the sunny account means /home/sunny/ml.
 """
@@ -40,6 +43,11 @@ MARKETS = {                                     # copied from pull/common.py (4 
 CLUSTERS = [c for cs in MARKETS.values() for c in cs]
 SCORED_CLUSTERS = [c for c in CLUSTERS if c != "egkz1"]
 MARKET_OF = {c: m for m, cs in MARKETS.items() for c in cs}
+
+# copied from pull/market.py (4 Nov 2026): fixed UTC offset of each market's product day, and the archive -> live cut
+TZ_HOURS = {"MX": -6, "TH": 7, "BD": 6, "PH": 8, "PK": 5, "BR": -3, "PE": -5, "CO": -5, "EG": 2}
+ARCHIVE_CUT = {"MX": "2026-08-16", "TH": "2026-08-17", "BD": "2026-08-18", "PH": "2026-08-18", "PK": "2026-08-19",
+               "BR": "2026-08-20", "PE": "2026-08-20", "CO": "2026-08-20", "EG": "2026-08-20"}
 
 DEFAULT_MODEL = "hybrid (recent continue + ranker new)"   # the default list since 3 Nov 2026
 SCORED_MODEL = "popular 30/70 minus played"               # defines who is scored (warm players with a list)
@@ -76,10 +84,54 @@ def guard(min_free_gb=MIN_FREE_GB):
 
 
 def connect(threads=4, memory="8GB"):
-    """An in-memory DuckDB with polite limits (the VM is shared with the nightly jobs)."""
+    """An in-memory DuckDB with polite limits (the VM is shared with the nightly jobs). Spills go to scratch/duck_tmp."""
+    tmp = f"{HOME}/scratch/duck_tmp"
+    os.makedirs(tmp, exist_ok=True)
     con = duckdb.connect()
-    con.execute(f"SET threads = {threads}; SET memory_limit = '{memory}'")
+    con.execute(f"SET threads = {threads}; SET memory_limit = '{memory}'; SET temp_directory = '{tmp}'; "
+                "SET enable_progress_bar = false")
     return con
+
+
+def market_db(c):
+    """The shared market cache holding plays_<c>, archive_<c>, rank_<c>, game_<c> (pull/market.py db_path)."""
+    m = MARKET_OF[c]
+    return f"{SHARED_DATA}/ml.duckdb" if m == "MX" else f"{SHARED_DATA}/{m.lower()}.duckdb"
+
+
+def ep(day, c):
+    """Epoch seconds of local midnight of `day` in the cluster's market (pull/market.py ep)."""
+    tz = dt.timezone(dt.timedelta(hours=TZ_HOURS[MARKET_OF[c]]))
+    return int(dt.datetime.combine(day, dt.time(0), tzinfo=tz).timestamp())
+
+
+def attach_market(con, c, alias="mkt"):
+    """Attach the market cache READ-ONLY. Raises duckdb.IOException while a writer holds it (mostly 02:00-07:00)."""
+    con.execute(f"ATTACH '{market_db(c)}' AS {alias} (READ_ONLY)")
+    return con
+
+
+def plays_sql(con, c, alias="mkt"):
+    """A parenthesised subquery over the cluster's plays (brand, member, game, ts, rounds, bet, earn): live plays from the
+    archive cut on, archive before it (pull/market.py plays_expr). No status filter, like build_recs.py."""
+    sel = ('SELECT "accountId" AS brand, "memberId" AS member, "gameId" AS game, ts, rounds, "betAmount" AS bet, '
+           '"earnAmount" AS earn FROM {t} WHERE "memberId" IS NOT NULL AND "gameId" IS NOT NULL')
+    have = {r[0] for r in con.execute(f"SELECT table_name FROM duckdb_tables() WHERE database_name = '{alias}'").fetchall()}
+    if f"archive_{c}" in have:
+        cut = f"TIMESTAMPTZ '{ARCHIVE_CUT[MARKET_OF[c]]} 00:00:00+00'"
+        return (f"({sel.format(t=f'{alias}.plays_{c}')} AND ts >= {cut} "
+                f"UNION ALL {sel.format(t=f'{alias}.archive_{c}')} AND ts < {cut})")
+    return f"({sel.format(t=f'{alias}.plays_{c}')})"
+
+
+def day_sql(c, day0, col="ts"):
+    """SQL for the market-day index of `col` counted from local midnight of day0 (build_recs.py convention)."""
+    return f"floor((epoch({col}) - {ep(day0, c)}) / 86400)"
+
+
+def hour_sql(c, col="ts"):
+    """SQL for the market-local hour 0-23 of `col`."""
+    return f"CAST(floor(((epoch({col}) + {TZ_HOURS[MARKET_OF[c]] * 3600}) % 86400) / 3600) AS INTEGER)"
 
 
 def snap_path(c, asof):
@@ -116,19 +168,31 @@ def load(c, asof, tables=("hist", "truth"), models=(RANKER_NEW,), scored_only=Tr
     return out
 
 
-def score(c, asof, mine=None, stored=(DEFAULT_MODEL,)):
-    """Score your lists (DataFrame with model, brand, member, game, rk) next to stored models of the snapshot.
+def score(c, asof, mine=None, stored=(DEFAULT_MODEL,), lists=()):
+    """Score your lists (DataFrame with model, brand, member, game, rk) next to stored models of the snapshot, and next to
+    brand lists from snap.lists (`lists`, e.g. ("live (as stored)",): every scored player gets the brand's list).
     Returns [{model, players, hr, new_hr, both_hr}], best HR first."""
     con = attach(connect(), c, asof)
     parts = []
     if stored:
         ms = ", ".join(f"'{m}'" for m in stored)
         parts.append(f"SELECT model, brand, member, game, rk FROM snap.recs WHERE model IN ({ms})")
+    if lists:
+        ls = ", ".join(f"'{m}'" for m in lists)
+        parts.append(f"SELECT l.model, w.brand, w.member, l.game, l.rk FROM w JOIN snap.lists l ON l.brand = w.brand "
+                     f"WHERE l.model IN ({ls})")
     if mine is not None and len(mine):
         con.register("_mine", mine[["model", "brand", "member", "game", "rk"]])
         parts.append("SELECT model, brand, member, game, rk FROM _mine")
-    rows = con.execute(EVAL_SQL.format(scored=SCORED_MODEL, union=" UNION ALL ".join(parts))).fetchall()
+    rows = score_sql(con, " UNION ALL ".join(parts))
     con.close()
+    return rows
+
+
+def score_sql(con, union):
+    """Score lists already in SQL (`union` = SELECT model, brand, member, game, rk ...) on a connection with the snapshot
+    attached as `snap`. Same rule and output as score(); use it when the lists are too big for a DataFrame."""
+    rows = con.execute(EVAL_SQL.format(scored=SCORED_MODEL, union=union)).fetchall()
     return [dict(model=m, players=n, hr=round(h, 5), new_hr=round(hn, 5), both_hr=round(hb, 5)) for m, n, h, hn, hb in rows]
 
 
