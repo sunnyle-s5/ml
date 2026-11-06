@@ -112,6 +112,13 @@ Reference: `recs_mx96g1_2026-10-19.duckdb` gives default 88.7 % · als-continue 
 - v3 review (`notes/2026-11-05-v3-arch-review.md`): a learned own + new ranker (`experiments/2026-11-05-v3-unified/`):
   - +1.13 pt HR@10 vs the default on 20/20 clusters, in one forward week (provisional). Re-run `run.py all` after Wed 11 Nov.
   - LLM content enrichment is bounded at 0.20 pt of HR@10 (share of scored players), so it is not worth doing.
+- Netflix/Shopify research (`notes/2026-11-06-netflix-shopify-recsys.md`): experiment backlog in `issues/recsys-research/`.
+  - Two tracks: an HR@10 track and a discovery track (adopted-game HR).
+  - Stage-0 ceilings (`experiments/2026-11-06-research-bounds/`) pass for 01–04. Fresh-game cold start (05) fails, which
+    supersedes the v3 content bound.
+  - v4 = v3 + those findings (`notes/2026-11-06-v4-review.md`): +0.08 pt HR@10 over v3 top 10, no gain in discovery.
+    The POC list stays v3.
+  - Player data never leaves the VM (`docs/adr/0001-player-data-stays-on-the-vm.md`).
 - Open with others: PostHog S3 read key (Harvey, #devops), moving the code into git (Yann, `pipeline/`).
 
 ## 7 · Agent skills

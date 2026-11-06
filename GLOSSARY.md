@@ -22,6 +22,10 @@ _Avoid_: shard, server
 The country a cluster serves, which sets its local day.
 _Avoid_: region
 
+**Game**:
+A provider's title, the same on every brand and cluster that lists it.
+_Avoid_: game id, listing
+
 ### Site
 
 **Lobby tab**:
@@ -39,16 +43,24 @@ _Avoid_: 30/70 formula, live ranking, auto-ranked
 ### Lists
 
 **Personal list**:
-The 10 games ML picks for one player, continue slots first and new games after.
+The 10 games ML picks for one player from their own games and new games.
 _Avoid_: hybrid, recs, for-you list
 
 **Continue slots**:
-The first 3 to 5 positions of a personal list, holding the player's most recently played games.
+In a personal list with a fixed split, the first 3 to 5 positions, holding the player's most recently played games.
 _Avoid_: your games, R block, recent block
+
+**Exploration slot**:
+A position in a personal list given to a new game drawn at random from the candidates, with its draw probability logged.
+_Avoid_: explore slot, random slot
 
 **New game**:
 A game the player has not played in the 60 days before the as-of date.
-_Avoid_: unplayed game, new release
+_Avoid_: unplayed game
+
+**Fresh game**:
+A game that first appears in a cluster's catalogue in the 30 days up to the as-of date.
+_Avoid_: new release, new launch
 
 **Adopted game**:
 A new game the player plays on at least two different local days within a week.
@@ -67,6 +79,10 @@ _Avoid_: hit rate, accuracy
 **New-game HR**:
 The share of scored players who play at least one new game among a list's first 10 in that week.
 _Avoid_: discovery rate
+
+**Adopted-game HR**:
+The share of scored players who adopt at least one new game among a list's first 10 in the week after the as-of date.
+_Avoid_: adoption rate, NGA-7
 
 **Day-one HR@10**:
 The share of cold players who, on their first day of play in the test week, play at least one of the first 10 games of the list they would see.
